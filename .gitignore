@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+.next/
+.env.local
+out/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+backend/generated_audio/
+backend/generated_uploads/
+
+# Logs
+*.log
