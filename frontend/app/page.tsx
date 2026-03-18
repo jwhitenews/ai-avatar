@@ -1,6 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import MessageList from "../components/MessageList";
+import ChatInput from "../components/ChatInput";
+import MicControls from "../components/MicControls";
 
 type Message = {
   role: "user" | "assistant";
@@ -12,9 +15,84 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const [sessionId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const existing = localStorage.getItem("session_id");
+      if (existing) return existing;
+
+      const newId = crypto.randomUUID();
+      localStorage.setItem("session_id", newId);
+      return newId;
+    }
+    return "default-session";
+  });
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/history/${sessionId}`
+        );
+        const data = await res.json();
+
+        const formatted = (data.messages || []).map((msg: any) => ({
+          role: msg.role,
+          text: msg.content,
+        }));
+
+        setMessages(formatted);
+      } catch (error) {
+        console.error("Failed to load history:", error);
+      }
+    };
+
+    loadHistory();
+  }, [sessionId]);
+
+  const speakText = async (text: string) => {
+    try {
+      setIsSpeaking(true);
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/tts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      const audioBlob = await res.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error("TTS failed:", error);
+      setIsSpeaking(false);
+    }
+  };
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -23,23 +101,30 @@ export default function Home() {
     setMessages((prev) => [...prev, { role: "user", text: userText }]);
     setInput("");
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        session_id: "web-session",
-        message: userText,
-      }),
-    });
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: userText,
+        }),
+      });
 
-    const data = await res.json();
+      const data = await res.json();
+      const reply = data.reply ?? "No reply received.";
 
-    setMessages((prev) => [
-      ...prev,
-      { role: "assistant", text: data.reply ?? "No reply received." },
-    ]);
+      setMessages((prev) => [...prev, { role: "assistant", text: reply }]);
+      await speakText(reply);
+    } catch (error) {
+      console.error("Chat failed:", error);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: "Something went wrong." },
+      ]);
+    }
   };
 
   const startRecording = async () => {
@@ -57,7 +142,10 @@ export default function Home() {
       };
 
       recorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: "audio/webm",
+        });
+
         const formData = new FormData();
         formData.append("file", audioBlob, "recording.webm");
 
@@ -98,34 +186,21 @@ export default function Home() {
     <main style={{ padding: 24, maxWidth: 800 }}>
       <h1>AI Chatbot</h1>
 
-      <div style={{ marginBottom: 16, border: "1px solid #ccc", padding: 12, minHeight: 240 }}>
-        {messages.length === 0 && <p>No messages yet.</p>}
-        {messages.map((msg, index) => (
-          <div key={index} style={{ marginBottom: 10 }}>
-            <strong>{msg.role}:</strong> {msg.text}
-          </div>
-        ))}
-      </div>
+      <MessageList messages={messages} />
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type or record a message..."
-          style={{ flex: 1, padding: 8 }}
-        />
-        <button onClick={sendMessage}>Send</button>
-      </div>
+      <ChatInput
+        input={input}
+        setInput={setInput}
+        sendMessage={sendMessage}
+      />
 
-      <div style={{ display: "flex", gap: 8 }}>
-        {!isRecording ? (
-          <button onClick={startRecording}>Start Mic</button>
-        ) : (
-          <button onClick={stopRecording}>Stop Mic</button>
-        )}
-
-        {isUploadingAudio && <span>Transcribing...</span>}
-      </div>
+      <MicControls
+        isRecording={isRecording}
+        isUploadingAudio={isUploadingAudio}
+        isSpeaking={isSpeaking}
+        startRecording={startRecording}
+        stopRecording={stopRecording}
+      />
     </main>
   );
 }

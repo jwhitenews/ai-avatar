@@ -1,22 +1,10 @@
-from pydantic import BaseModel, Field
+from sqlalchemy import Column, Integer, String, Text
+from app.db import Base
 
+class Message(Base):
+    __tablename__ = "messages"
 
-class ChatRequest(BaseModel):
-    session_id: str = Field(..., min_length=1)
-    message: str = Field(..., min_length=1)
-    system_prompt: str | None = None
-
-
-class ChatResponse(BaseModel):
-    session_id: str
-    reply: str
-
-
-class AvatarRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-
-
-class AvatarResponse(BaseModel):
-    status: str
-    provider: str
-    data: dict
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String, index=True, nullable=False)
+    role = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
