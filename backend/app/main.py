@@ -1,25 +1,66 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import get_settings
-from app.routes.avatar import router as avatar_router
-from app.routes.chat import router as chat_router
-from app.routes.health import router as health_router
-from app.routes.stt import router as stt_router
-from app.routes.tts import router as tts_router
+from pydantic import BaseModel
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+import tempfile
 
-settings = get_settings()
-app = FastAPI(title="AI Avatar Starter API", version="0.1.0")
+load_dotenv()
+
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(health_router)
-app.include_router(chat_router)
-app.include_router(stt_router)
-app.include_router(tts_router)
-app.include_router(avatar_router)
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise ValueError("OPENAI_API_KEY is not set")
+
+client = OpenAI(api_key=api_key)
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    response = client.responses.create(
+        model="gpt-4.1",
+        input=req.message
+    )
+    return {"reply": response.output_text}
+
+@app.post("/stt")
+async def speech_to_text(file: UploadFile = File(...)):
+    suffix = os.path.splitext(file.filename or "audio.webm")[1] or ".webm"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        contents = await file.read()
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        with open(tmp_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="gpt-4o-mini-transcribe",
+                file=audio_file,
+            )
+        return {"transcript": transcript.text}
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
